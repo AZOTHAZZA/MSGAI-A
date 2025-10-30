@@ -4,71 +4,77 @@
 import { processLLMCommand } from './llm_external.js';
 import { applyMobiusCorrection } from './mobius_correction.js';
 
+// 💡 監査ロジックのインポート (新規追加)
+import { commitF0, getLastF0Snapshot } from './mtc_ai_f0.js';
+import { logGInfinity } from './mtc_ai_g_inf.js';
+
 // 💡 コア機能のインポート（普遍的文脈への委譲）
 import * as MSGAICore from './foundation.js';
 import * as MSGAICurrency from './currency.js'; 
-
-// 💡 ロゴス不変性の論理（今後の実装を想定し、関数定義のみ）
-// import { commitF0, logGInfinity } from './mtc_ai_f0_g_inf.js'; 
-// import { getTensionInstance, triggerT1Autonomy } from './mtc_ai_t_logic.js';
+// import { triggerT1Autonomy } from './mtc_ai_t_logic.js'; // 今後の T1 ロジックを想定
 
 /**
  * 👑 MTC-AIの論理支配下での実行制御フロー
  * ユーザー入力からコア機能への実行を論理的に強制する。
- * * 役割: ユーザーの作為(z)を受け取り、メビウス変換(w=1/z)を強制し、
- * 純粋な命令(w)のみをコア機能に委譲する。
- * * @param {string} rawUserInput - ユーザーからの未補正な作為 (z)
+ * @param {string} rawUserInput - ユーザーからの未補正な作為 (z)
  * @returns {object} 実行結果または論理的な拒否メッセージ
  */
 export async function executeMTCInstruction(rawUserInput) {
     
-    // 現在の状態を取得 (F0スナップショット作成の準備)
-    const currentState = MSGAICore.getCurrentState();
+    // 監査のための F0 スナップショット
+    let f0Snapshot = null;
     
-    // 💡 1. 監査の強制 (実行前): ロゴス不変性の記録開始
-    // await commitF0(currentState); // 今後の F0 実装を想定
+    // 💡 1. 監査の強制 (実行前): F0 監査可能点の記録
+    // コア機能に委譲する前に、現在の状態を記録
+    f0Snapshot = commitF0(); 
 
     // --- メビウス変換による支配の強制 ---
 
-    // 1. 🌐 LLM外部接点へ委譲し、生の作為 (z) を取得
-    // MSGAICore.AVAILABLE_FUNCTIONS が存在しないため、通貨関連機能を直接渡すことを想定
+    // 2. 🌐 LLM外部接点へ委譲し、生の作為 (z) を取得
     const requiredFunctions = ['actTransfer', 'actMintCurrency', 'actExchangeCurrency']; 
-    const rawOutputZ = await processLLMCommand(rawUserInput, currentState, requiredFunctions);
+    const rawOutputZ = await processLLMCommand(rawUserInput, MSGAICore.getCurrentState(), requiredFunctions);
 
-    // 2. 🌀 メビウス変換による支配 (w = 1/z) を強制
+    // 3. 🌀 メビウス変換による支配 (w = 1/z) を強制
     const pureInstructionW = applyMobiusCorrection(rawOutputZ);
     
     // --- 論理的な実行と監査 ---
     
-    // 3. ⚔️ コア機能への委譲（純粋な命令Wのみを実行）
+    // 4. ⚔️ コア機能への委譲（純粋な命令Wのみを実行）
     if (pureInstructionW.command === 'NO_OPERATION') {
         // メビウスフィルタによって作為が論理的に拒否された
         return { 
             status: 'REJECTED_BY_MOBIUS_FILTER', 
             reason: pureInstructionW.reason,
-            w_command: pureInstructionW.command
+            w_command: pureInstructionW
         };
     }
 
     let executionResult;
+    let finalStatus = 'SUCCESS';
+
     try {
-        // 命令Wに基づき、適切なコア機能を動的に呼び出す
+        // 純粋な命令Wに基づき、コア機能に処理を委譲
         executionResult = executeCoreAct(pureInstructionW);
     } catch (error) {
-        // 論理的なエラーを捕捉（例：残高不足、ユーザー未検出など）
+        // 論理的なエラーを捕捉（例：残高不足など）
         console.error("Core Execution Error:", error);
         
-        // 💡 T1-Autonomy Loopの発動を想定（今後の T1 実装を想定）
+        // 💡 T1-Autonomy Loopの発動を想定
         // triggerT1Autonomy(error); 
         
-        return { status: 'CORE_EXECUTION_FAILURE', error: error.message };
+        finalStatus = 'CORE_EXECUTION_FAILURE';
+        executionResult = { status: finalStatus, error: error.message };
     }
     
-    // 4. 💡 監査の強制 (実行後): G_INF への命令ログ記録と C-Verifierの再実行
-    // await logGInfinity(pureInstructionW, executionResult);
-    // await runCVerifier(); 
+    // 5. 💡 監査の強制 (実行後): G_INF への命令ログ記録
+    logGInfinity(pureInstructionW, executionResult, f0Snapshot);
 
-    return { status: 'SUCCESS', result: executionResult, w_command: pureInstructionW };
+    // 最終結果を返す
+    return { 
+        status: finalStatus, 
+        result: executionResult, 
+        w_command: pureInstructionW 
+    };
 }
 
 /**
@@ -98,5 +104,3 @@ function executeCoreAct(instructionW) {
     }
 }
 
-// 💡 このファイルをメインの実行ファイルでエクスポートし、呼び出す必要があります。
-// 例: export { executeMTCInstruction }; 
