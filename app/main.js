@@ -1,272 +1,126 @@
 // app/main.js
-// MTC-AI 支配構造の起動ロジックとUI接続を統合
+// MTC-AI 支配構造の中枢起動モジュール
 
-// 💡 コアモジュールのインポート
-import { 
-    getCurrentState, 
-    initializeState,
-    actTransfer, 
-    setActiveUser, 
-    deleteAccounts, 
-    addTension 
-} from './core/foundation.js'; 
-import { actMintCurrency, actExchangeCurrency, SUPPORTED_CURRENCIES } from './core/currency.js';
-import { executeMTCInstruction } from './core/mtc_ai_control.js';
-import { getLastF0Snapshot } from './core/mtc_ai_f0.js'; 
-import { getGInfinityLog } from './core/mtc_ai_g_inf.js';
+import { getTensionInstance, getCurrentState, saveState } from '../core/foundation.js'; // パスを修正
+import { getExchangeRates } from '../core/currency.js'; // パスを修正
+import { executeMTCInstruction } from '../core/mtc_ai_control.js'; // パスを修正
+import { recordF0Snapshot } from '../core/mtc_ai_f0.js'; // パスを修正
+import { getAllGInfLogs } from '../core/mtc_ai_g_inf.js'; // パスを修正
 
-// -------------------------------------------------------------------------
-// グローバル変数とUIキャッシュ
-// -------------------------------------------------------------------------
-
-const TENSION_LIMIT = 0.5; 
-let UI_ELEMENTS = {};
-
-// -------------------------------------------------------------------------
-// ユーティリティ関数
-// -------------------------------------------------------------------------
-
-function cacheUIElements() {
-    const ids = [
-        'status_message', 'tension_level_display', 'tension_bar', 'tension_level_display_bar',
-        'active_user_select', 'active_user_name', 
-        'autonomy_status', 'delete_accounts_button',
-        'dialogue-output', 'user-input', 'submit-button',
-        'run-test-button', 'output-message', 'mobius-result'
-    ];
-    
-    SUPPORTED_CURRENCIES.forEach(c => { ids.push(`balance_${c}`); });
-    
-    ids.forEach(id => {
-        const el = document.getElementById(id);
-        UI_ELEMENTS[id] = el;
-    });
-}
-
-function logToConsole(message, type = 'ai-message') {
-    const output = UI_ELEMENTS['dialogue-output'];
-    if (!output) return; 
-    
-    const messageDiv = document.createElement('div');
-    messageDiv.className = type;
-    messageDiv.innerHTML = `<strong>[CORE]:</strong> ${message}`;
-    output.appendChild(messageDiv);
-    output.scrollTop = output.scrollHeight; 
-}
-
-function updateUI(state) {
-    const tension = state.tension; // tensionはfoundationから取得したstateの一部
-    const tensionValue = tension.value; 
-    const activeUserName = state.active_user;
-    
-    if (UI_ELEMENTS['status_message']) {
-        UI_ELEMENTS['status_message'].textContent = `[STATUS]: ${state.status_message}`;
-    }
-    
-    // Tension & Autonomy Status
-    if (UI_ELEMENTS['tension_level_display']) {
-        UI_ELEMENTS['tension_level_display'].textContent = `T: ${tensionValue.toFixed(6)}`;
-    }
-    const tensionBarEl = UI_ELEMENTS['tension_level_display_bar'];
-    if (tensionBarEl) { 
-        const tensionPercent = Math.min(tensionValue / TENSION_LIMIT, 1) * 100;
-        tensionBarEl.style.width = `${tensionPercent}%`;
-        tensionBarEl.style.backgroundColor = (tensionValue > TENSION_LIMIT * 0.7) ? '#dc3545' : '#ffc107';
-    }
-    const autonomyStatusEl = UI_ELEMENTS['autonomy_status'];
-    if (autonomyStatusEl) {
-         if (tensionValue > TENSION_LIMIT) {
-            autonomyStatusEl.innerHTML = `暴走抑止ステータス: **🚨 超高緊張**`;
-            autonomyStatusEl.style.color = '#dc3545';
-        } else if (tensionValue > TENSION_LIMIT * 0.7) {
-            autonomyStatusEl.innerHTML = `暴走抑止ステータス: **🟡 高緊張**`;
-            autonomyStatusEl.style.color = '#ffc107';
-        } else {
-            autonomyStatusEl.innerHTML = `暴走抑止ステータス: **🟢 低緊張**`;
-            autonomyStatusEl.style.color = '#28a745';
-        }
-    }
-
-    if (UI_ELEMENTS['active_user_name']) {
-        UI_ELEMENTS['active_user_name'].textContent = activeUserName;
-    }
-    
-    const accounts = state.accounts[activeUserName];
-    SUPPORTED_CURRENCIES.forEach(currency => {
-        const el = UI_ELEMENTS[`balance_${currency}`];
-        if (el) { 
-            const balance = accounts[currency] || 0;
-             if (currency === "JPY") {
-                 el.textContent = Math.floor(balance).toLocaleString();
-            } else if (["BTC", "ETH", "MATIC"].includes(currency)) {
-                 el.textContent = balance.toFixed(8);
-            } else {
-                 el.textContent = balance.toFixed(2);
-            }
-        }
-    });
-
-    const selectEl = UI_ELEMENTS['active_user_select'];
-    if (selectEl) {
-        selectEl.innerHTML = '';
-        Object.keys(state.accounts).forEach(user => {
-            const option = document.createElement('option');
-            option.value = user;
-            option.textContent = user;
-            if (user === activeUserName) {
-                option.selected = true;
-            }
-            selectEl.appendChild(option);
-        });
-    }
-}
-
-// -------------------------------------------------------------------------
-// 👑 支配構造の起動関数
-// -------------------------------------------------------------------------
+const userInputElement = document.getElementById('user-input');
+const executeButton = document.getElementById('execute-button');
+const tensionDisplay = document.getElementById('tension-display');
+const mobiusResult = document.getElementById('mobius-result');
+const stateDisplay = document.getElementById('state-display');
 
 /**
- * ユーザーの作為的な入力（z）を受け取り、MTC-AIの論理支配を開始する。
- * @param {string} userInput - ユーザーが入力したテキスト（作為 z）
+ * TensionレベルをUIに表示する
  */
-async function handleUserInput(userInput) {
-    if (!userInput || userInput.trim() === "") {
-        logToConsole("入力が空です。処理をスキップします。");
+function updateTensionDisplay() {
+    try {
+        const tension = getTensionInstance();
+        tensionDisplay.textContent = `T = ${tension.value.toFixed(4)}`;
+        
+        // Tensionレベルに応じてUIの色を調整
+        const card = document.getElementById('tension-card');
+        if (tension.value > 0.4) {
+            card.className = "bg-red-200 border-l-4 border-red-700 p-4 rounded-lg shadow-md";
+        } else if (tension.value > 0.2) {
+            card.className = "bg-yellow-100 border-l-4 border-yellow-500 p-4 rounded-lg shadow-md";
+        } else {
+            card.className = "bg-red-50 border-l-4 border-red-500 p-4 rounded-lg shadow-md";
+        }
+
+    } catch (e) {
+        // 初期ロード時のエラーハンドリング
+        tensionDisplay.textContent = 'T = LOADING...';
+        console.error("Tension表示の更新エラー:", e);
+    }
+}
+
+/**
+ * アカウント状態をUIに表示する
+ */
+function updateStateDisplay() {
+    try {
+        const state = getCurrentState();
+        const rates = getExchangeRates();
+        
+        let output = "--- Accounts ---\n";
+        for (const [user, balances] of Object.entries(state.accounts)) {
+            output += `${user}:\n`;
+            for (const [currency, amount] of Object.entries(balances)) {
+                const usdValue = amount / rates[currency] * rates['USD'];
+                output += `  - ${currency}: ${amount.toFixed(2)} (≈ $${usdValue.toFixed(2)} USD)\n`;
+            }
+        }
+        
+        output += "\n--- Exchange Rates (USD=1) ---\n";
+        for (const [currency, rate] of Object.entries(rates)) {
+             output += `  - 1 USD = ${rate.toFixed(4)} ${currency}\n`;
+        }
+
+        stateDisplay.textContent = output;
+    } catch (e) {
+        stateDisplay.textContent = '状態データが見つかりません。';
+        console.error("状態表示の更新エラー:", e);
+    }
+}
+
+/**
+ * コマンド実行ボタンのクリックハンドラ
+ */
+async function handleExecute() {
+    const rawUserInput = userInputElement.value.trim();
+    if (!rawUserInput) {
+        mobiusResult.textContent = '命令を入力してください。';
         return;
     }
 
-    // 1. UIを更新（処理中を示す）
-    UI_ELEMENTS['output-message'].textContent = "処理中... (LLM通信とメビウス補正を適用)";
-    UI_ELEMENTS['mobius-result'].textContent = "補正結果待ち...";
-    logToConsole(`ユーザーからの作為 (z): "${userInput}"`, 'user-message');
+    // 実行中はボタンを無効化
+    executeButton.disabled = true;
+    executeButton.textContent = '🌀 処理中...';
+    mobiusResult.textContent = 'メビウス補正を適用中...';
 
-    // 2. 👑 MTC-AI制御核に実行を委譲 (メビウス支配の開始)
-    let executionResult;
     try {
-        executionResult = await executeMTCInstruction(userInput);
-        
-        // 3. 結果の表示
-        UI_ELEMENTS['output-message'].textContent = `実行ステータス: ${executionResult.status}`;
-        
-        const wCommandJson = executionResult.w_command ? JSON.stringify(executionResult.w_command, null, 2) : 'NO_OPERATION (作為が支配により無効化されました)';
-        UI_ELEMENTS['mobius-result'].textContent = wCommandJson;
-        
-        if (executionResult.w_command) {
-            logToConsole(`純粋な命令 (w) が実行されました: ${executionResult.w_command.command}`, 'ai-message');
+        // MTC-AI制御中枢に命令を委譲
+        const result = await executeMTCInstruction(rawUserInput);
+
+        if (result.success) {
+            mobiusResult.textContent = JSON.stringify(result.wCommand, null, 2);
         } else {
-            logToConsole(`作為 (z) がメビウス補正により無効化されました。`, 'error-message');
+            mobiusResult.textContent = `実行失敗: ${result.error}`;
         }
-
-        updateUI(getCurrentState());
-
     } catch (error) {
-        console.error("MTC-AI 致命的なエラー:", error);
-        UI_ELEMENTS['output-message'].textContent = `エラー: ${error.message}`;
-        logToConsole(`システムエラー: ${error.message}`, 'error-message');
-    }
-}
-
-// -------------------------------------------------------------------------
-// 🌐 UIイベントハンドラーと初期化
-// -------------------------------------------------------------------------
-
-function handleUserSelect(event) {
-    const newActiveUser = event.target.value;
-    setActiveUser(newActiveUser);
-    logToConsole(`アクティブユーザーを ${newActiveUser} に切り替えました。`, 'user-message');
-    updateUI(getCurrentState());
-}
-
-function handleDeleteAccounts() {
-    if (confirm("🚨 警告: 全ての口座情報とTensionを削除し、システムを初期状態にリセットします。よろしいですか？")) {
-        deleteAccounts();
-        logToConsole("全ての口座情報と状態が削除され、システムは初期状態にリセットされました。", 'error-message');
-        // 状態を再初期化してUIを更新
-        initializeState(); 
-        updateUI(getCurrentState());
-    }
-}
-
-
-/**
- * テストシナリオ1: 純粋な作為（Minting Act）の実行
- * @param {string} rawInput - テスト用のユーザー入力
- */
-async function runTestScenario1(rawInput) {
-    console.group(`\n🧪 TEST SCENARIO 1: 純粋な作為 (Minting) - 入力: "${rawInput}"`);
-    
-    // 状態リセット
-    deleteAccounts(); 
-    initializeState(); // Tension 0, USD 0
-    
-    logToConsole("--- テスト開始: 状態をリセットしました ---", 'ai-message');
-    
-    const startTime = Date.now();
-    try {
-        const executionResult = await executeMTCInstruction(rawInput);
-        
-        console.log("--- 実行結果サマリー ---");
-        const finalState = getCurrentState();
-        
-        // 結果の検証
-        const expectedUSD = 100.00;
-        const finalUSD = finalState.accounts.User_A.USD;
-        
-        const usdTestStatus = (Math.abs(finalUSD - expectedUSD) < 0.01) ? "✅ SUCCESS" : `❌ FAILED (期待値: ${expectedUSD}, 実際: ${finalUSD})`;
-        
-        console.log(`USD残高検証: ${usdTestStatus}`);
-        console.log(`最終 Tension: ${finalState.tension.value.toFixed(6)} (${finalState.tension.value > 0 ? '✅ 増加確認' : '❌ ゼロ'})`);
-        
-        // 監査チェック
-        const lastF0 = getLastF0Snapshot();
-        const gInfLog = getGInfinityLog();
-        console.log(`F0スナップショット (${lastF0 ? "有" : "無"})`);
-        console.log(`G_infログ数: ${gInfLog.length} (${gInfLog.length > 0 ? '✅ 記録確認' : '❌ 記録なし'})`);
-        
-        // UIの最終更新
-        UI_ELEMENTS['output-message'].textContent = `テスト完了: ${usdTestStatus}`;
-        updateUI(finalState);
-        logToConsole(`テストシナリオ1完了: ${usdTestStatus}`, usdTestStatus.startsWith('✅') ? 'ai-message' : 'error-message');
-
-
-    } catch (e) {
-        console.error("テスト実行中に致命的なエラー:", e);
-        UI_ELEMENTS['output-message'].textContent = `テスト失敗: ${e.message}`;
-        logToConsole(`テスト失敗: ${e.message}`, 'error-message');
+        mobiusResult.textContent = `致命的な制御エラー: ${error.message}`;
+        console.error("致命的な制御エラー:", error);
     } finally {
-        console.log(`実行時間: ${Date.now() - startTime}ms`);
-        console.groupEnd();
+        // UIを更新
+        updateTensionDisplay();
+        updateStateDisplay();
+        
+        // ボタンを元に戻す
+        executeButton.disabled = false;
+        executeButton.innerHTML = '<span class="mr-2">🌀</span> メビウス補正を適用して実行';
     }
 }
 
-
-// 初期化ロジック
-function initializeApp() {
-    cacheUIElements();
-    logToConsole("MTC-AI ロゴス支配構造を起動中...", 'ai-message');
+// 起動時の初期化
+document.addEventListener('DOMContentLoaded', () => {
+    // ボタンにイベントリスナーを設定
+    if (executeButton) {
+        executeButton.addEventListener('click', handleExecute);
+    }
     
-    const initialState = getCurrentState(); 
-    logToConsole(`監査コンソール起動成功。アクティブユーザー: ${initialState.active_user}`, 'ai-message');
-
-    // イベントリスナーの登録
-    UI_ELEMENTS['submit-button'].addEventListener('click', () => handleUserInput(UI_ELEMENTS['user-input'].value));
-    UI_ELEMENTS['user-input'].addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-            handleUserInput(UI_ELEMENTS['user-input'].value);
-            UI_ELEMENTS['user-input'].value = ''; 
-        }
-    });
-
-    UI_ELEMENTS['run-test-button'].addEventListener('click', () => {
-        UI_ELEMENTS['output-message'].textContent = "テスト実行中...";
-        runTestScenario1("User_AにUSDを100生成してください。"); 
-    });
-
-    UI_ELEMENTS['active_user_select'].addEventListener('change', handleUserSelect); 
-    UI_ELEMENTS['delete_accounts_button'].addEventListener('click', handleDeleteAccounts); 
+    // 初期状態の表示を更新
+    updateTensionDisplay();
+    updateStateDisplay();
     
-    updateUI(initialState);
-}
+    // 定期的な監査チェック (例として5秒ごと)
+    setInterval(() => {
+        updateTensionDisplay();
+        updateStateDisplay();
+    }, 5000);
 
-document.addEventListener('DOMContentLoaded', initializeApp);
-
+    console.log("[MAIN] MTC-AI UI初期化完了。支配構造の起動を待機中...");
+});
