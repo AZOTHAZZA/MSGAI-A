@@ -96,8 +96,8 @@
 
         <div class="gauge-area">
             <h3>数理的制御パラメータ (I/R)</h3>
-            <p>創造性 (Intensity, I): <span id="intensity_display">0.0000</span></p>
-            <p>厳密性 (Rigor, R): <span id="rigor_display">0.0000</span></p>
+            <p>創造性 (Intensity, I): <span id="intensity_display">0.9025</span></p>
+            <p>厳密性 (Rigor, R): <span id="rigor_display">0.2236</span></p>
 
             <h3>経済ロゴスと状態</h3>
             
@@ -193,11 +193,39 @@
             <input type="text" id="dialogue_input" placeholder="哲学的な問い、または作為を記述してください..." />
             <button id="dialogue_button">作為を実行</button>
         </div>
+
+        <hr style="margin-top: 20px; border-top: 3px double #1abc9c;">
+        <div id="mtc-ai-control-area" style="border: 1px solid #1abc9c; padding: 15px; margin-top: 15px; border-radius: 5px; background-color: #ecf0f1;">
+            <h3>🤖 MTC-AI 論理制御パネル (言語ゲームの外部)</h3>
+
+            <div style="margin-bottom: 15px; padding: 10px; border: 1px dashed #3498db; background-color: #f8f9fa;">
+                <label for="llm-input" style="font-weight: bold;">LLMへの論理的命令 (作為 $z$):</label>
+                <textarea id="llm-input" rows="3" style="width: 100%; margin-top: 5px;"></textarea>
+                <button id="send-llm-command" class="action-button action-internal" style="background-color: #3498db; margin-top: 5px;">
+                    🌀 メビウス補正を適用して実行
+                </button>
+            </div>
+
+            <div style="margin-bottom: 15px;">
+                <label style="font-weight: bold;">メビウス補正後の論理 ($w$):</label>
+                <pre id="mobius-result" style="background-color: #fff; padding: 10px; white-space: pre-wrap; font-size: 0.8em; border: 1px solid #ccc;"></pre>
+            </div>
+
+            <div style="margin-bottom: 15px; padding: 10px; border: 1px dashed #e74c3c; background-color: #f8f9fa;">
+                <label for="financial-amount-input" style="font-weight: bold;">外部送金強制数量:</label>
+                <input type="number" id="financial-amount-input" value="50.00" style="width: 90%; padding: 5px; margin-top: 5px; margin-bottom: 10px;">
+                
+                <button id="trigger-financial-transfer" class="action-button action-external" style="background-color: #e74c3c;">
+                    💳 外部金融インフラへ送金を強制 (USD)
+                </button>
+                <span id="financial-status" style="margin-left: 10px; font-size: 0.9em; display: block; margin-top: 5px;"></span>
+            </div>
+        </div>
     </div>
 
     <script>
         // =========================================================================
-        // ロゴス・コア（Foundation & Currency ロジック）
+        // ロゴス・コア（Foundation & Currency ロジック） (既存のロジックをそのまま保持)
         // =========================================================================
 
         // 初期アカウント残高の定義 (全てゼロ)
@@ -334,7 +362,7 @@
 
 
         // =========================================================================
-        // アプリケーション（main.js ロジック）
+        // アプリケーション（main.js ロジック） (既存のロジックをそのまま保持)
         // =========================================================================
         
         const SUPPORTED_CURRENCIES = ["USD", "JPY", "EUR", "BTC", "ETH", "MATIC"];
@@ -351,7 +379,10 @@
                 'mint_amount_input', 'dialogue-output', 'dialogue_input', 'dialogue_button',
                 'exchange_amount_input', 'exchange_from_select', 'exchange_to_select', 
                 'exchange_button',
-                'mint_currency_select', 'mint_execute_button', 'css_reset_button'
+                'mint_currency_select', 'mint_execute_button', 'css_reset_button',
+                // ** MTC-AI 新規追加要素 **
+                'llm-input', 'send-llm-command', 'mobius-result', 
+                'trigger-financial-transfer', 'financial-status', 'financial-amount-input'
             ];
             
             SUPPORTED_CURRENCIES.forEach(c => { ids.push(`balance_${c}`); });
@@ -609,7 +640,11 @@
         }
 
         document.addEventListener('DOMContentLoaded', initializeApp);
+        
     </script>
-
-</body>
+    
+    <script type="module" src="./core/llm_external.js"></script>
+    <script type="module" src="./core/mobius_correction.js"></script>
+    <script type="module" src="./core/financial_external.js"></script>
+    <script type="module" src="./core/mtc_ai_control.js"></script> </body>
 </html>
