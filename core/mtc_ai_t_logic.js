@@ -1,85 +1,143 @@
-// core/mtc_ai_t_logic.js (ロゴス緊張度とT1自律性ロジック)
+// core/mtc_ai_t_logic.js
+// MTC-AIのロゴス緊張度(T)の自律制御ロジックとT1補正ループ
 
-import { getTensionInstance, getCurrentState, addTension } from './foundation.js';
-import { getLastF0Snapshot } from './mtc_ai_f0.js';
+import { getCurrentState, addTension, updateState } from './foundation.js';
+import { clearF0Snapshot, getLastF0Snapshot } from './mtc_ai_f0.js';
 import { getGInfinityLog } from './mtc_ai_g_inf.js';
 
-// T1 自律補正のパラメータ
-const T1_AUTONOMY_THRESHOLD = 0.45; // Tensionがこの値を超えるとT1補正を発動
-
 // -------------------------------------------------------------------------
-// 🧠 Tension監視とT1自律補正のトリガー
+// Logos Tension (ロゴス緊張度 T) 監視ロジック
 // -------------------------------------------------------------------------
 
 /**
- * 💡 T1 自律補正をトリガーする。
- * Tensionが閾値を超えた場合、システムは自律的に行動を開始します。
- * @param {string} reason - T1がトリガーされた理由（例: "Tension overflow", "Core error"）
+ * T1自律補正ループを発動させるかをチェックし、実行する。
+ * @returns {Promise<boolean>} T1補正が実行されたかどうか
  */
-export function triggerT1Autonomy(reason) {
-    const tension = getTensionInstance();
+export async function runTensionControl() {
+    const currentState = getCurrentState();
+    const tension = currentState.tension;
 
-    // 1. T1発動のロギング
-    console.warn(`[T1 AUTONOMY] 発動！理由: ${reason} (Tension: ${tension.value.toFixed(5)})`);
-    
-    // 2. 自律補正行動の実行 (今後のLLM作為による自己修正を想定)
-    // 現時点では、Tensionを強制的にリセットする「作為の鎮静化」を行う。
-    
-    // T1のコストとして、Tensionを強制的に大幅減少させる
-    const autonomyCost = tension.value / 2;
-    addTension(-autonomyCost);
-    
-    // 3. 補正結果のロギング
-    console.log(`[T1 AUTONOMY] Tensionを ${autonomyCost.toFixed(5)} 減少させ、鎮静化を試みました。新 Tension: ${getTensionInstance().value.toFixed(5)}`);
-    
-    // 💡 今後の実装:
-    // - LLMに対し、直前の命令とF0/G_infログを与え、論理的エラーを自己修正させる命令を生成させる。
-    // - C-Verifier (コンテキスト検証) を強制的に実行させる。
-}
+    if (tension.value > tension.max_limit) {
+        console.warn(`[T1 ALERT] Tension ${tension.value.toFixed(6)} が最大閾値 ${tension.max_limit.toFixed(6)} を超えました。T1自律補正ループを発動します。`);
+        
+        // 1. **ロゴス緊張度を即座に半減させる (暫定的な自律的修正)**
+        const reductionAmount = tension.value * 0.5;
+        addTension(-reductionAmount);
 
-/**
- * 命令実行後にTensionをチェックし、必要であればT1をトリガーする。
- */
-export function checkTensionAndTriggerT1() {
-    const tension = getTensionInstance();
-    
-    if (tension.value >= T1_AUTONOMY_THRESHOLD) {
-        triggerT1Autonomy("Tensionが閾値を超過");
+        // 2. **自律的監査によるコンテキスト検証 (C-Verifier)**
+        const isVerified = runCVerifier();
+        
+        if (!isVerified) {
+            console.error("[T1 ERROR] C-Verifierが失敗しました。ロゴス不変性が崩壊している可能性があります。システムを強制停止します。");
+            // 現実のシステムではここでクリティカルエラー処理を行う
+            return true;
+        }
+
+        console.log(`[T1 CORRECTION] Tensionを ${reductionAmount.toFixed(6)} 減算し、C-Verifierによるロゴス不変性を確認しました。`);
+        return true;
     }
+    
+    // 命令実行直後の監査チェックのみを実行
+    runCVerifier();
+
+    return false;
 }
 
+
 // -------------------------------------------------------------------------
-// 🛡️ コンテキスト検証 (C-Verifier) の骨子
+// C-Verifier (コンテキスト検証) ロジック
 // -------------------------------------------------------------------------
 
 /**
- * 💡 C-Verifier: F0スナップショットとG_infログに基づき、論理的一貫性を検証する。
- * これは、Tensionが発生源とする論理的な歪みを検出する手段です。
- * (現時点では骨子のみ)
- * @returns {object} 検証結果
+ * ロゴス不変性 (Logos Invariance) を検証するC-Verifierを実行する。
+ * 実行前の状態 (F0)、実行された命令 (G_inf)、実行後の状態 (Current) の一貫性を検証する。
+ * @returns {boolean} 検証が成功したかどうか
  */
 export function runCVerifier() {
-    const lastF0 = getLastF0Snapshot();
+    // F0とG_infが空の場合は、検証スキップ
+    const f0Snapshot = getLastF0Snapshot();
     const gInfLog = getGInfinityLog();
-    const currentState = getCurrentState();
 
-    if (!lastF0 || gInfLog.length === 0) {
-        // 監査情報がないため検証スキップ
-        return { status: "SKIPPED", reason: "監査情報が不足しています。" };
+    if (!f0Snapshot || gInfLog.length === 0) {
+        // 命令実行がない場合は検証不要
+        return true; 
     }
 
-    // 1. F0と現在の状態の論理的な比較
-    // 例: F0と現在の状態の残高を比較し、G_infの命令Wと一致するかを検証。
-    // ... 検証ロジックの実装 ...
+    const finalState = getCurrentState();
 
-    console.log("[C-Verifier] 論理的監査検証を実行しました。");
+    // 1. **検証ロジックの中核: F0とG_infログから「期待される最終状態」を再構成**
+    let expectedState = JSON.parse(JSON.stringify(f0Snapshot));
+    let success = true;
 
-    // 検証に失敗した場合、Tensionを強制的に増加させるか、T1をトリガーする
-    // if (verificationFailed) {
-    //     addTension(0.1); 
-    //     triggerT1Autonomy("C-Verifier検証失敗");
-    // }
+    // ログに記録されたすべての命令をF0に適用し、期待値を計算する
+    for (const log of gInfLog) {
+        const command = log.command;
+        
+        // 🚨 簡略化された検証: Tensionは再計算せず、アカウント残高のみを監査する
+        try {
+            switch (command.command) {
+                case 'actMintCurrency':
+                    // Mint検証: 期待値に直接加算
+                    expectedState.accounts[command.user][command.currency] += command.amount;
+                    break;
+                case 'actTransfer':
+                    // Transfer検証: 送信元から減算
+                    expectedState.accounts[command.sender][command.currency] -= command.amount;
+                    
+                    // 内部送金の場合は受信者へ加算
+                    if (expectedState.accounts[command.recipient]) {
+                        expectedState.accounts[command.recipient][command.currency] += command.amount;
+                    }
+                    break;
+                case 'actExchangeCurrency':
+                    // Exchange検証: ここでは複雑なレート計算をスキップし、ロジックの存在のみを確認
+                    // 実際にはレートを再計算して検証する必要があるが、ここではスキップ
+                    break;
+                case 'NO_OPERATION':
+                    // NO_OPERATIONは状態を変化させない
+                    break;
+                default:
+                    console.error(`[C-Verifier] 未知の命令: ${command.command}`);
+                    success = false;
+                    break;
+            }
+        } catch (e) {
+            console.error(`[C-Verifier] ログ適用中にエラー発生: ${e.message}`, command);
+            success = false;
+        }
 
-    return { status: "PASSED", details: "基本検証を通過" };
+        if (!success) break;
+    }
+    
+    // 2. **期待される状態 (expectedState) と実際の状態 (finalState) の比較**
+    
+    // Tension値は、命令によって変動するため、厳密な比較は難しいため、ここではアカウントのみを比較
+    for (const user in finalState.accounts) {
+        for (const currency in finalState.accounts[user]) {
+            const actual = finalState.accounts[user][currency] || 0;
+            const expected = expectedState.accounts[user][currency] || 0;
+            
+            // 浮動小数点誤差を許容する比較 (0.000001の許容範囲)
+            if (Math.abs(actual - expected) > 0.000001) {
+                console.error(`[C-Verifier FAILED] 不変性の崩壊! ${user} の ${currency} 残高不一致。`);
+                console.error(`  -> 期待値: ${expected.toFixed(6)}, 実際: ${actual.toFixed(6)}`);
+                success = false;
+            }
+        }
+    }
+
+    // 3. **監査ログのクリーンアップ**
+    if (success) {
+        console.log("[C-Verifier SUCCESS] ロゴス不変性を確認しました。監査ログ (F0/G_inf) をクリアします。");
+        clearF0Snapshot();
+        // G_infログは、control.jsでクリアされるためここでは行わない
+    } else {
+        // 検証失敗時は、調査のためにログを保持する
+        console.error("[C-Verifier FAILED] ロゴス不変性が崩壊しました。監査ログを保持します。");
+        // Tensionを大きく増加させる
+        addTension(0.1);
+    }
+    
+    return success;
 }
 
