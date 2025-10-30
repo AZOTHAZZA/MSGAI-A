@@ -1,102 +1,139 @@
-// core/currency.js (最終修正版 - 全文)
+// app.main.js (MTC-AI 支配構造の起動ロジック)
 
-import { 
-    getCurrentState, 
-    updateState, 
-    getTensionInstance, 
-    addTension // 💡 修正: addTensionをインポート
-} from './foundation.js';
+// 支配構造の核となる制御関数と状態関数をインポート
+import { executeMTCInstruction } from './core/mtc_ai_control.js';
+import { getCurrentState, setActiveUser, deleteAccounts } from './core/foundation.js'; 
 
-// 簡略化された静的な為替レート (USDに対する固定比率)
-const EXCHANGE_RATES = {
-    JPY: 130, // 1 USD = 130 JPY
-    EUR: 0.9,  // 1 USD = 0.9 EUR
-    BTC: 0.00005, // 1 USD = 0.00005 BTC
-    ETH: 0.001, // 1 USD = 0.001 ETH
-    MATIC: 1.5, // 1 USD = 1.5 MATIC
-    USD: 1
-};
-
-
-// =========================================================================
-// 通貨生成 (Minting Act)
-// =========================================================================
+// -------------------------------------------------------------------------
+// 🚀 支配構造の起動関数
+// -------------------------------------------------------------------------
 
 /**
- * 通貨生成作為 (Minting Act) を実行し、残高とTensionを増やす。
- * @param {string} user - 通貨を生成するユーザー名
- * @param {string} currency - 生成する通貨コード
- * @param {number} amount - 生成する数量
- * @returns {object} 更新された状態 (newState)
+ * ユーザーの作為的な入力（z）を受け取り、MTC-AIの論理支配を開始する。
+ * @param {string} userInput - ユーザーが入力したテキスト（作為 z）
  */
-export function actMintCurrency(user, currency, amount) {
-    const state = getCurrentState();
-
-    if (!state.accounts[user]) {
-        throw new Error(`User ${user} not found.`);
+async function handleUserInput(userInput) {
+    if (!userInput || userInput.trim() === "") {
+        console.log("Input is empty. No operation.");
+        return;
     }
 
-    // 1. 残高の増加
-    state.accounts[user][currency] = (state.accounts[user][currency] || 0) + amount;
+    console.log("--- 支配構造起動: ユーザー作為 (z) 受領 ---");
+    console.log(`ユーザー入力: ${userInput}`);
 
-    // 2. Tensionの計算と増加
-    // Mintingは大きな作為とみなし、Tension増加率は高めに設定
-    const usdEquivalent = amount / (EXCHANGE_RATES[currency] || 1);
-    const tensionIncrease = usdEquivalent * 0.005; 
-    
-    // 💡 修正: tensionInstance.add() から addTension() へ変更
-    addTension(tensionIncrease);
+    // 1. 👑 MTC-AI制御核に実行を委譲 (メビウス支配の開始)
+    let executionResult;
+    try {
+        executionResult = await executeMTCInstruction(userInput);
+        
+        // 2. 結果の表示（純粋な命令 w の確認）
+        console.log("--- 支配構造完了: 純粋な命令 (w) 実行結果 ---");
+        console.log("実行ステータス:", executionResult.status);
+        if (executionResult.w_command) {
+            console.log("実行されたW-Command:", executionResult.w_command.command);
+            console.log("命令詳細:", executionResult.w_command);
+        }
+        
+        // 3. 最新の状態とメッセージの表示をUIに反映（コンソールにも出力）
+        updateUIAfterExecution();
 
-    // 3. 状態の更新
-    updateState(state);
-    return state;
+    } catch (error) {
+        // 致命的なエラーやT1が捕捉できないエラー
+        console.error("MTC-AI FATAL ERROR:", error);
+        alert("システムで致命的な論理エラーが発生しました。詳細はコンソールを確認してください。");
+    }
 }
 
-// =========================================================================
-// 通貨交換 (Exchange Act)
-// =========================================================================
+// -------------------------------------------------------------------------
+// 🌐 UI要素への接続と状態更新ロジック
+// -------------------------------------------------------------------------
 
-/**
- * 通貨交換作為 (Exchange Act) を実行し、残高を交換する。
- * @param {string} user - 交換を行うユーザー名
- * @param {string} fromCurrency - 売却する通貨コード
- * @param {number} fromAmount - 売却する数量
- * @param {string} toCurrency - 購入する通貨コード
- * @returns {object} 更新された状態 (newState)
- */
-export function actExchangeCurrency(user, fromCurrency, fromAmount, toCurrency) {
+function updateUIAfterExecution() {
     const state = getCurrentState();
-
-    if (!state.accounts[user]) {
-        throw new Error(`User ${user} not found.`);
+    const accountsDiv = document.getElementById('accounts-display');
+    const statusDiv = document.getElementById('status-message');
+    
+    if (statusDiv) {
+        statusDiv.textContent = `STATUS: ${state.status_message} | TENSION: ${state.tension.value.toFixed(5)} | USER: ${state.active_user}`;
     }
 
-    // 1. 残高チェック
-    if ((state.accounts[user][fromCurrency] || 0) < fromAmount) {
-        throw new Error(`${fromCurrency} の残高が不足しています。`);
+    if (accountsDiv) {
+        let html = `
+            <div class="account-card bg-gray-700 p-4 rounded-lg shadow-lg mb-4">
+                <h3 class="text-xl font-bold text-yellow-300 mb-2">Active User: ${state.active_user}</h3>
+            </div>
+        `;
+        
+        // 全ユーザーの残高を表示
+        for (const user in state.accounts) {
+            html += `<div class="account-card bg-gray-800 p-3 rounded-md mb-2 shadow-md">`;
+            html += `<p class="font-semibold text-blue-300">${user} Accounts:</p>`;
+            for (const currency in state.accounts[user]) {
+                const balance = state.accounts[user][currency];
+                html += `<span class="text-sm text-gray-200 mr-4">${currency}: ${balance.toFixed(4)}</span>`;
+            }
+            html += `</div>`;
+        }
+        accountsDiv.innerHTML = html;
     }
-
-    // 2. 数量の計算
-    // USD基準で換算
-    const rateFrom = EXCHANGE_RATES[fromCurrency] || 1;
-    const rateTo = EXCHANGE_RATES[toCurrency] || 1;
     
-    // 売却数量をUSD換算
-    const usdEquivalent = fromAmount / rateFrom;
-    // USD換算値を購入通貨に換算
-    const toAmount = usdEquivalent * rateTo;
-
-    // 3. 残高の変更
-    state.accounts[user][fromCurrency] -= fromAmount;
-    state.accounts[user][toCurrency] = (state.accounts[user][toCurrency] || 0) + toAmount;
-
-    // 4. Tensionの計算と増加
-    // ExchangeはMintingよりは低いが、Tensionが発生
-    const tensionIncrease = usdEquivalent * 0.001; 
-    
-    addTension(tensionIncrease); // 💡 修正: addTensionを使用
-
-    // 5. 状態の更新
-    updateState(state);
-    return state;
+    console.log("最新の状態:", state);
 }
+
+
+document.addEventListener('DOMContentLoaded', () => {
+    const inputElement = document.getElementById('user-input'); 
+    const submitButton = document.getElementById('submit-button'); 
+    const userSelect = document.getElementById('user-select');
+    const deleteButton = document.getElementById('delete-accounts-button');
+    
+    // UI要素の存在確認
+    if (!inputElement || !submitButton || !userSelect || !deleteButton) {
+        console.error("UI要素（入力欄、ボタン、選択肢）がindex.htmlに見つかりません。");
+        return;
+    }
+
+    // ユーザー選択肢の初期化
+    const state = getCurrentState();
+    for (const user in state.accounts) {
+        const option = document.createElement('option');
+        option.value = user;
+        option.textContent = user;
+        userSelect.appendChild(option);
+    }
+    userSelect.value = state.active_user;
+
+    // イベントリスナーの設定
+    const submitAction = () => {
+        const userInput = inputElement.value;
+        handleUserInput(userInput);
+        inputElement.value = ''; // 入力フィールドをクリア
+    };
+    
+    // ユーザー切り替え
+    userSelect.addEventListener('change', (e) => {
+        setActiveUser(e.target.value);
+        updateUIAfterExecution();
+    });
+    
+    // アカウント全削除機能
+    deleteButton.addEventListener('click', () => {
+        if (confirm("全てのアカウントとTensionデータをリセットしますか？")) { // 警告: Canvasではconfirmは動作しないが、ロジックとして残す
+            deleteAccounts();
+            updateUIAfterExecution();
+            console.log("アカウントデータが初期状態にリセットされました。");
+        }
+    });
+
+    submitButton.addEventListener('click', submitAction);
+    inputElement.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            submitAction();
+        }
+    });
+
+    // 初期状態の表示
+    updateUIAfterExecution();
+    console.log("MTC-AI Front-End Ready. 支配構造は待機状態です。");
+});
+
