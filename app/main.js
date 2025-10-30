@@ -1,4 +1,5 @@
-// app.main.js (MTC-AI 支配構造の起動ロジック)
+// app/main.js (新版 MTC-AI 支配構造の起動ロジック)
+// 役割: ユーザー入力を受け取り、すべてを core/mtc_ai_control.js に委譲する。
 
 // 支配構造の核となる制御関数と状態関数をインポート
 import { executeMTCInstruction } from './core/mtc_ai_control.js';
@@ -14,33 +15,48 @@ import { getCurrentState, setActiveUser, deleteAccounts } from './core/foundatio
  */
 async function handleUserInput(userInput) {
     if (!userInput || userInput.trim() === "") {
-        console.log("Input is empty. No operation.");
+        updateUIAfterExecution("警告: 入力なし。操作スキップ。", "warning");
         return;
     }
 
-    console.log("--- 支配構造起動: ユーザー作為 (z) 受領 ---");
-    console.log(`ユーザー入力: ${userInput}`);
+    // 1. UIのロックとメッセージ表示
+    document.getElementById('submit-button').disabled = true;
+    updateUIAfterExecution("処理中: メビウス支配構造に作為を投入...", "info");
 
-    // 1. 👑 MTC-AI制御核に実行を委譲 (メビウス支配の開始)
+    console.log("--- 支配構造起動: ユーザー作為 (z) 受領 ---");
+    
     let executionResult;
     try {
+        // 2. 👑 MTC-AI制御核に実行を委譲 (メビウス支配の開始)
         executionResult = await executeMTCInstruction(userInput);
         
-        // 2. 結果の表示（純粋な命令 w の確認）
-        console.log("--- 支配構造完了: 純粋な命令 (w) 実行結果 ---");
-        console.log("実行ステータス:", executionResult.status);
-        if (executionResult.w_command) {
-            console.log("実行されたW-Command:", executionResult.w_command.command);
-            console.log("命令詳細:", executionResult.w_command);
+        // 3. 結果の処理
+        let statusMessage = "実行結果: ";
+        let statusType = "success";
+
+        if (executionResult.status === 'SUCCESS') {
+            statusMessage += `純粋な命令 (${executionResult.w_command.command}) が実行されました。`;
+        } else if (executionResult.status === 'REJECTED_BY_MOBIUS_FILTER') {
+            statusMessage = `命令はメビウスフィルタにより論理的に拒否されました。理由: ${executionResult.reason}`;
+            statusType = "rejected";
+        } else if (executionResult.status === 'CORE_EXECUTION_FAILURE') {
+            statusMessage = `コア機能の実行失敗: ${executionResult.error}`;
+            statusType = "error";
+        } else {
+            statusMessage = `不明な実行結果: ${JSON.stringify(executionResult)}`;
+            statusType = "error";
         }
-        
-        // 3. 最新の状態とメッセージの表示をUIに反映（コンソールにも出力）
-        updateUIAfterExecution();
+
+        console.log("--- 支配構造完了 ---", executionResult);
+        updateUIAfterExecution(statusMessage, statusType);
 
     } catch (error) {
-        // 致命的なエラーやT1が捕捉できないエラー
+        // 致命的なエラー
         console.error("MTC-AI FATAL ERROR:", error);
-        alert("システムで致命的な論理エラーが発生しました。詳細はコンソールを確認してください。");
+        updateUIAfterExecution("致命的なシステムエラーが発生しました。", "error");
+    } finally {
+        // 4. UIのアンロック
+        document.getElementById('submit-button').disabled = false;
     }
 }
 
@@ -48,15 +64,25 @@ async function handleUserInput(userInput) {
 // 🌐 UI要素への接続と状態更新ロジック
 // -------------------------------------------------------------------------
 
-function updateUIAfterExecution() {
+function updateUIAfterExecution(message = "状態更新完了", type = "default") {
     const state = getCurrentState();
     const accountsDiv = document.getElementById('accounts-display');
     const statusDiv = document.getElementById('status-message');
     
+    // ステータスメッセージのスタイリング
+    let colorClass = 'text-green-400';
+    if (type === 'error' || type === 'rejected') {
+        colorClass = 'text-red-400';
+    } else if (type === 'info' || type === 'warning') {
+        colorClass = 'text-yellow-400';
+    }
+    
     if (statusDiv) {
-        statusDiv.textContent = `STATUS: ${state.status_message} | TENSION: ${state.tension.value.toFixed(5)} | USER: ${state.active_user}`;
+        statusDiv.className = `text-lg font-mono ${colorClass} mb-3 border-b border-gray-700 pb-2`;
+        statusDiv.textContent = `STATUS: ${message} | TENSION: ${state.tension.value.toFixed(5)} | USER: ${state.active_user}`;
     }
 
+    // アカウント表示の更新
     if (accountsDiv) {
         let html = `
             <div class="account-card bg-gray-700 p-4 rounded-lg shadow-lg mb-4">
@@ -64,7 +90,6 @@ function updateUIAfterExecution() {
             </div>
         `;
         
-        // 全ユーザーの残高を表示
         for (const user in state.accounts) {
             html += `<div class="account-card bg-gray-800 p-3 rounded-md mb-2 shadow-md">`;
             html += `<p class="font-semibold text-blue-300">${user} Accounts:</p>`;
@@ -87,9 +112,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const userSelect = document.getElementById('user-select');
     const deleteButton = document.getElementById('delete-accounts-button');
     
-    // UI要素の存在確認
     if (!inputElement || !submitButton || !userSelect || !deleteButton) {
-        console.error("UI要素（入力欄、ボタン、選択肢）がindex.htmlに見つかりません。");
+        console.error("UI要素が見つかりません。index.htmlのIDを確認してください。");
         return;
     }
 
@@ -107,20 +131,19 @@ document.addEventListener('DOMContentLoaded', () => {
     const submitAction = () => {
         const userInput = inputElement.value;
         handleUserInput(userInput);
-        inputElement.value = ''; // 入力フィールドをクリア
+        inputElement.value = ''; 
     };
     
-    // ユーザー切り替え
     userSelect.addEventListener('change', (e) => {
         setActiveUser(e.target.value);
-        updateUIAfterExecution();
+        updateUIAfterExecution("ユーザー切り替え完了");
     });
     
-    // アカウント全削除機能
     deleteButton.addEventListener('click', () => {
-        if (confirm("全てのアカウントとTensionデータをリセットしますか？")) { // 警告: Canvasではconfirmは動作しないが、ロジックとして残す
+        // Canvas環境では動作しないが、確認ロジックを保持
+        if (confirm("全てのアカウントとTensionデータをリセットしますか？")) { 
             deleteAccounts();
-            updateUIAfterExecution();
+            updateUIAfterExecution("データリセット完了");
             console.log("アカウントデータが初期状態にリセットされました。");
         }
     });
@@ -133,7 +156,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // 初期状態の表示
-    updateUIAfterExecution();
-    console.log("MTC-AI Front-End Ready. 支配構造は待機状態です。");
+    updateUIAfterExecution("コア起動完了");
+    console.log("MTC-AI 支配構造 Front-End Ready.");
 });
 
