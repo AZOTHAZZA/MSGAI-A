@@ -1,102 +1,110 @@
-// core/currency.js (最終修正版 - 全文)
+// core/currency.js
+// 通貨に関連するAct（Mint, Exchange）と為替レートのロジックを提供
 
-import { 
-    getCurrentState, 
-    updateState, 
-    getTensionInstance, 
-    addTension // 💡 修正: addTensionをインポート
-} from './foundation.js';
+import { getCurrentState, updateState, addTension } from './foundation.js';
 
-// 簡略化された静的な為替レート (USDに対する固定比率)
+// -------------------------------------------------------------------------
+// 通貨とレートの定義
+// -------------------------------------------------------------------------
+
+/**
+ * サポートされている通貨コードのリスト
+ * @type {string[]}
+ */
+export const SUPPORTED_CURRENCIES = ["USD", "JPY", "EUR", "BTC", "ETH", "MATIC"];
+
+/**
+ * USD基準の為替レート (1単位あたりのUSD換算値, またはUSDが基準)
+ * 厳密には、USDを1とした場合の相対的な値。
+ * @type {Object<string, number>}
+ */
 const EXCHANGE_RATES = {
-    JPY: 130, // 1 USD = 130 JPY
-    EUR: 0.9,  // 1 USD = 0.9 EUR
+    USD: 1,      // 基準
+    JPY: 130,    // 1 USD = 130 JPY (簡略化された表現)
+    EUR: 0.9,    // 1 USD = 0.9 EUR
     BTC: 0.00005, // 1 USD = 0.00005 BTC
-    ETH: 0.001, // 1 USD = 0.001 ETH
-    MATIC: 1.5, // 1 USD = 1.5 MATIC
-    USD: 1
+    ETH: 0.001,  // 1 USD = 0.001 ETH
+    MATIC: 1.5   // 1 USD = 1.5 MATIC
 };
 
-
-// =========================================================================
-// 通貨生成 (Minting Act)
-// =========================================================================
+// -------------------------------------------------------------------------
+// Act (行為) ロジック
+// -------------------------------------------------------------------------
 
 /**
- * 通貨生成作為 (Minting Act) を実行し、残高とTensionを増やす。
- * @param {string} user - 通貨を生成するユーザー名
- * @param {string} currency - 生成する通貨コード
- * @param {number} amount - 生成する数量
- * @returns {object} 更新された状態 (newState)
+ * 指定された通貨を指定量生成（Mint）するActを実行する。
+ * @param {string} user - 通貨を生成するユーザー
+ * @param {string} currency - 通貨コード
+ * @param {number} amount - 生成数量
+ * @returns {import('./foundation.js').SystemState} - 更新されたシステム状態
  */
 export function actMintCurrency(user, currency, amount) {
-    const state = getCurrentState();
+    const currentState = getCurrentState();
 
-    if (!state.accounts[user]) {
+    if (!currentState.accounts[user]) {
         throw new Error(`User ${user} not found.`);
     }
+    if (amount <= 0 || isNaN(amount)) {
+        throw new Error("生成数量は正の値を指定してください。");
+    }
 
-    // 1. 残高の増加
-    state.accounts[user][currency] = (state.accounts[user][currency] || 0) + amount;
-
-    // 2. Tensionの計算と増加
-    // Mintingは大きな作為とみなし、Tension増加率は高めに設定
-    const usdEquivalent = amount / (EXCHANGE_RATES[currency] || 1);
-    const tensionIncrease = usdEquivalent * 0.005; 
+    currentState.accounts[user][currency] = (currentState.accounts[user][currency] || 0) + amount;
     
-    // 💡 修正: tensionInstance.add() から addTension() へ変更
+    // Tension増加を計算: USD換算量に基づく
+    // USD換算: amount * (1 / RATE[currency])
+    // 例: 130 JPY Minting -> 1 USD 相当 (130 * (1/130))
+    const usdEquivalent = amount / (EXCHANGE_RATES[currency] || 1); 
+    const tensionIncrease = usdEquivalent * 0.005; // Mintingは比較的高い摩擦を持つ
+
     addTension(tensionIncrease);
-
-    // 3. 状態の更新
-    updateState(state);
-    return state;
+    updateState(currentState);
+    return currentState;
 }
-
-// =========================================================================
-// 通貨交換 (Exchange Act)
-// =========================================================================
 
 /**
- * 通貨交換作為 (Exchange Act) を実行し、残高を交換する。
- * @param {string} user - 交換を行うユーザー名
- * @param {string} fromCurrency - 売却する通貨コード
- * @param {number} fromAmount - 売却する数量
- * @param {string} toCurrency - 購入する通貨コード
- * @returns {object} 更新された状態 (newState)
+ * 通貨交換（Exchange）Actを実行する。
+ * @param {string} user - 交換を行うユーザー
+ * @param {string} fromCurrency - 売却通貨
+ * @param {number} fromAmount - 売却数量
+ * @param {string} toCurrency - 購入通貨
+ * @returns {import('./foundation.js').SystemState} - 更新されたシステム状態
  */
 export function actExchangeCurrency(user, fromCurrency, fromAmount, toCurrency) {
-    const state = getCurrentState();
+    const currentState = getCurrentState();
 
-    if (!state.accounts[user]) {
+    if (!currentState.accounts[user]) {
         throw new Error(`User ${user} not found.`);
     }
-
-    // 1. 残高チェック
-    if ((state.accounts[user][fromCurrency] || 0) < fromAmount) {
+    if ((currentState.accounts[user][fromCurrency] || 0) < fromAmount) {
         throw new Error(`${fromCurrency} の残高が不足しています。`);
     }
+    if (fromCurrency === toCurrency) {
+        throw new Error("交換元と交換先は異なる通貨でなければなりません。");
+    }
 
-    // 2. 数量の計算
-    // USD基準で換算
-    const rateFrom = EXCHANGE_RATES[fromCurrency] || 1;
-    const rateTo = EXCHANGE_RATES[toCurrency] || 1;
+    // USD換算価値を計算
+    const rateFromUSD = EXCHANGE_RATES[fromCurrency] || 1;
+    const rateToUSD = EXCHANGE_RATES[toCurrency] || 1;
     
-    // 売却数量をUSD換算
-    const usdEquivalent = fromAmount / rateFrom;
-    // USD換算値を購入通貨に換算
-    const toAmount = usdEquivalent * rateTo;
+    // USD基準: amount / (rate[from]のUSD換算)
+    const usdEquivalent = fromCurrency === 'USD' 
+        ? fromAmount 
+        : (fromAmount / rateFromUSD) * EXCHANGE_RATES.USD; // USDを基準とする
 
-    // 3. 残高の変更
-    state.accounts[user][fromCurrency] -= fromAmount;
-    state.accounts[user][toCurrency] = (state.accounts[user][toCurrency] || 0) + toAmount;
+    // 購入数量の計算: usdEquivalent * rate[to]のUSD換算
+    const toAmount = toCurrency === 'USD' 
+        ? usdEquivalent
+        : usdEquivalent * rateToUSD / EXCHANGE_RATES.USD;
 
-    // 4. Tensionの計算と増加
-    // ExchangeはMintingよりは低いが、Tensionが発生
+    // 残高の更新
+    currentState.accounts[user][fromCurrency] -= fromAmount;
+    currentState.accounts[user][toCurrency] = (currentState.accounts[user][toCurrency] || 0) + toAmount;
+
+    // Tension増加: ExchangeはMintingより摩擦が低い
     const tensionIncrease = usdEquivalent * 0.001; 
-    
-    addTension(tensionIncrease); // 💡 修正: addTensionを使用
+    addTension(tensionIncrease);
 
-    // 5. 状態の更新
-    updateState(state);
-    return state;
+    updateState(currentState);
+    return currentState;
 }
+
